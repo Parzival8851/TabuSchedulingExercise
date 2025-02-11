@@ -2,20 +2,10 @@ import java.util.*;
 
 public class TabuSearchScheduler {
 
-	// A helper factorial function (used only to compute maxIterations)
-	public static long fattoriale(int n) {
-		if (n <= 1) {
-			return 1;
-		} else {
-			for (int i = n - 1; i > 1; i--) {
-				n *= i;
-				if (n > 10_000) {
-					return n;
-				}
-			}
-		}
-		return n;
-	}
+	public static final int MAX_FCT_VALUE = 10_000;
+	public static final double MIN_TENURE_FRAC = 0.005;
+	public static final double INITIAL_TENURE_FRAC = 0.15;
+	public static final double MAX_TENURE_FRAC = 0.75;
 
 	public static void main(String[] args) {
 		int w = 1;
@@ -29,13 +19,14 @@ public class TabuSearchScheduler {
 				new Job(6, 3, 22, w)
 		);
 
-		// Use min(sqrt(n!), 10_000) as before to set the maximum number of iterations.
-		int maxIterations = (int) Math.min(Math.sqrt(fattoriale(jobs.size())), 10_000);
+		// maxIterations = min(n!, MAX_FCT_VALUE)
+		int size = jobs.size();
+		int maxIterations = fattoriale(size, MAX_FCT_VALUE);
 
-		// Initial adaptive tenure parameters
-		int initialTabuTenure = Math.min(maxIterations / 20, jobs.size() - 1);
-		int minTabuTenure = 1;
-		int maxTabuTenure = jobs.size() - 1;
+		int maxTabuTenure = (int) (jobs.size() * MAX_TENURE_FRAC); // Maximum tabu tenure
+		int minTabuTenure = (int) Math.max(size * MIN_TENURE_FRAC, 1); // Minimum tabu tenure
+		// Initial tabu tenure: between minTabuTenure and maxTabuTenure, prefer the lower bound to allow diversification
+		int initialTabuTenure = (int) Math.max(minTabuTenure, Math.min(size * INITIAL_TENURE_FRAC, maxTabuTenure));
 
 		// Run the enhanced Tabu Search
 		List<Job> bestSequence = tabuSearch(jobs, maxIterations, initialTabuTenure, minTabuTenure, maxTabuTenure);
@@ -82,7 +73,7 @@ public class TabuSearchScheduler {
 
 					// 3. THRESHOLD ASPIRATION:
 					// Allow a move that is tabu if it improves at least 5% over the best solution.
-					if (!isTabu || neighborObjective < bestObjective * 0.95) {
+					if (!isTabu || neighborObjective <= bestObjective * 0.95) {
 						candidateList.add(new Candidate(neighbor, move, neighborObjective, quickEval));
 					}
 				}
@@ -176,6 +167,22 @@ public class TabuSearchScheduler {
 			}
 		}
 		return maxTardiness;
+	}
+
+	// A helper factorial function (used only to compute maxIterations)
+	public static int fattoriale(int n, int maxValue) {
+		if (n <= 1) {
+			return 1;
+		}
+
+		int result = n;
+		for (int i = n - 1; i >= 2; i--) {
+			if (result > maxValue / i) { // Prevent fictitious overflow before multiplication
+				return result;
+			}
+			result *= i;
+		}
+		return result;
 	}
 }
 
