@@ -48,6 +48,12 @@ public class TabuSearchScheduler {
 		List<Job> bestSolution = new ArrayList<>(currentSolution);
 		double bestObjective = calculateTotalWeightedTardiness(bestSolution);
 
+		System.out.println("EDD Initial Solution:");
+		for (Job job : currentSolution) {
+			System.out.print("Job" + job.id + " ");
+		}
+		System.out.println("\nTotal Weighted Tardiness: " + bestObjective);
+
 		// Keep track of the best solution and its iteration
 		int bestIteration = 0;
 
