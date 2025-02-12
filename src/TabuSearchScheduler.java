@@ -65,14 +65,20 @@ public class TabuSearchScheduler {
 		int currentTabuTenure = initialTabuTenure;
 		int nonImprovementCount = 0;
 
+		// Adaptive jump size variables for non-adjacent swaps.
+		int minJumpSize = 1;
+		int maxJumpSize = currentSolution.size() - 1;
+		int currentJumpSize = minJumpSize; // Start with adjacent swaps (jump size = 1).
+
 		while (iteration < maxIterations) {
 			iteration++;
-			List<Candidate> candidateList = new ArrayList<>();
+			List<Candidate> allCandidateList = new ArrayList<>();
+			List<Candidate> validCandidateList = new ArrayList<>();
 
 			// NEIGHBORHOOD GENERATION: using non-adjacent swaps
 			// Also compute both the full objective and a quick evaluation (max tardiness)
-			for (int i = 0; i < currentSolution.size() - 1; i++) {
-				for (int j = i + 1; j < currentSolution.size(); j++) {
+			for (int i = 0; i < currentSolution.size() - currentJumpSize; i++) {
+				for (int j = i + currentJumpSize; j < currentSolution.size(); j+=currentJumpSize) {
 					List<Job> neighbor = new ArrayList<>(currentSolution);
 					Collections.swap(neighbor, i, j);
 
@@ -82,29 +88,18 @@ public class TabuSearchScheduler {
 
 					boolean isTabu = tabuList.containsKey(move) && tabuList.get(move) > iteration;
 
+					Candidate candidate = new Candidate(neighbor, move, neighborObjective, quickEval);
+					allCandidateList.add(candidate);
+
 					// 3. THRESHOLD ASPIRATION:
 					// Allow a move that is tabu if it improves at least 5% over the best solution.
 					if (!isTabu || neighborObjective <= bestObjective * 0.95) {
-						candidateList.add(new Candidate(neighbor, move, neighborObjective, quickEval));
+						validCandidateList.add(candidate);
 					}
 				}
 			}
 
-			// 4. CANDIDATE LIST FALLBACK:
-			// If no candidate meets the criteria, ignore tabu restrictions and generate the candidate list.
-			if (candidateList.isEmpty()) {
-				for (int i = 0; i < currentSolution.size() - 1; i++) {
-					for (int j = i + 1; j < currentSolution.size(); j++) {
-						List<Job> neighbor = new ArrayList<>(currentSolution);
-						Collections.swap(neighbor, i, j);
-
-						Move move = new Move(currentSolution.get(i).id, currentSolution.get(j).id);
-						double neighborObjective = calculateTotalWeightedTardiness(neighbor);
-						double quickEval = calculateMaxTardiness(neighbor);
-						candidateList.add(new Candidate(neighbor, move, neighborObjective, quickEval));
-					}
-				}
-			}
+			List<Candidate> candidateList = validCandidateList.isEmpty() ? allCandidateList : validCandidateList;
 
 			// 5. TWO-PHASE SELECTION:
 			// Phase 1: Quick evaluation based on maximum tardiness.
@@ -127,11 +122,13 @@ public class TabuSearchScheduler {
 				bestIteration = iteration;
 				nonImprovementCount = 0;
 				currentTabuTenure = minTabuTenure;
+				currentJumpSize = minJumpSize; // Reset the jump size to 1.
 			} else {
 				nonImprovementCount++;
 				if (nonImprovementCount >= noImprovementThreshold) {
 					// Increase the tabu tenure to force diversification.
 					currentTabuTenure = Math.min(currentTabuTenure + 1, maxTabuTenure);
+					currentJumpSize = Math.min(currentJumpSize + 1, maxJumpSize);
 					nonImprovementCount = 0;
 				}
 			}
