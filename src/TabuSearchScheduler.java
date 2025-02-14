@@ -17,32 +17,43 @@ import java.util.*;
  * @author Matteo Boniotti - 731246
  */
 public class TabuSearchScheduler {
+	// ============================ Tabu Search Parameters ============================
 
-	// ============================ General Parameters ============================
+	// ---------------------------- General Parameters ----------------------------
 	/** Maximum factorial value used to cap the maximum number of iterations */
 	public static final int MAX_FACTORIAL = 10_000;
 
-	// ============================ Tabu Search Parameters ============================
+	// ---------------------------- Tenure Parameters ----------------------------
 	/** Minimum tabu tenure fraction (relative to number of jobs) */
 	public static final double MIN_TENURE_FRAC = 0.05;
 	/** Initial tabu tenure fraction (relative to number of jobs) */
 	public static final double INITIAL_TENURE_FRAC = 0.15;
 	/** Maximum tabu tenure fraction (relative to number of jobs) */
 	public static final double MAX_TENURE_FRAC = 0.75;
+	/** Fraction used to calculate the tenure decay threshold relative to maximum iterations */
+	public static final double TENURE_DECAY_THRESHOLD = 0.5;
 
+	// ---------------------------- No Improvement Parameters ----------------------------
 	/** Fraction used to calculate the no-improvement threshold relative to maximum iterations */
 	public static final int NO_IMPROVEMENT_THRESHOLD_FRAC = 100;
 	/** Minimum number of iterations without improvement before adapting parameters */
 	public static final int MIN_NO_IMPROVEMENT_THRESHOLD = 50;
 
-	// ============================ Long-Term Memory (LTM) Parameters ============================
+	// ---------------------------- Aspiration Criterion Parameters ----------------------------
+	/** Fraction used to calculate the aspiration threshold relative to best solution value */
+	public static final double BASE_ASPIRATION = 0.05;
+	/** Minimum aspiration threshold */
+	public static final double MIN_ASPIRATION = 0.01;
+	/** Fraction used to adapt the aspiration threshold */
+	public static final double FRAC_ASPIRATION_ADAPT = 0.04;
+
+	// ---------------------------- Long-Term Memory (LTM) Parameters ----------------------------
 	/** Coefficient used for penalizing move frequency in the LTM frequency-based mechanism */
 	public static final double PENALTY_COEFFICIENT = 0.1;
-	public static final double BASE_ASPIRATION = 0.05;
-	public static final double MIN_ASPIRATION = 0.01;
-	public static final double FRAC_ASPIRATION_ADAPT = 0.04;
+
+	// ---------------------------- Quick Evaluation Parameters ----------------------------
+	/** Fraction used to calculate the quick evaluation threshold relative to maximum iterations */
 	public static final double FRAC_QUICK_EVAL = 0.5;
-	public static final double TENURE_DECAY_THRESHOLD = 0.5;
 
 	/**
 	 * Main method.
