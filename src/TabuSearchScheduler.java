@@ -6,16 +6,15 @@ import java.util.*;
  *
  * <p>This implementation uses:
  * <ul>
- *   <li>Adaptive tabu tenure and jump size for neighborhood exploration</li>
+ *   <li>Adaptive tabu tenure and jump size for neighborhood exploration based on adjacent and non-adjacent swaps</li>
  *   <li>A dynamic aspiration threshold that relaxes when improvements are scarce</li>
  *   <li>A Long-Term Memory (LTM) frequency-based penalty to discourage overused moves</li>
- *   <li>A dedicated {@link Solution} class to encapsulate the schedule operations</li>
  * </ul>
  *
  * <p>All parameters influencing the Tabu Search behavior are defined as final constants
  * at the beginning of the program, grouped by role.
  *
- * @author
+ * @author Matteo Boniotti - 731246
  */
 public class TabuSearchScheduler {
 
@@ -25,7 +24,7 @@ public class TabuSearchScheduler {
 
 	// ============================ Tabu Search Parameters ============================
 	/** Minimum tabu tenure fraction (relative to number of jobs) */
-	public static final double MIN_TENURE_FRAC = 0.005;
+	public static final double MIN_TENURE_FRAC = 0.05;
 	/** Initial tabu tenure fraction (relative to number of jobs) */
 	public static final double INITIAL_TENURE_FRAC = 0.15;
 	/** Maximum tabu tenure fraction (relative to number of jobs) */
@@ -39,6 +38,11 @@ public class TabuSearchScheduler {
 	// ============================ Long-Term Memory (LTM) Parameters ============================
 	/** Coefficient used for penalizing move frequency in the LTM frequency-based mechanism */
 	public static final double PENALTY_COEFFICIENT = 0.1;
+	public static final double BASE_ASPIRATION = 0.05;
+	public static final double MIN_ASPIRATION = 0.01;
+	public static final double FRAC_ASPIRATION_ADAPT = 0.04;
+	public static final double FRAC_QUICK_EVAL = 0.5;
+	public static final double TENURE_DECAY_THRESHOLD = 0.5;
 
 	/**
 	 * Main method.
@@ -63,11 +67,15 @@ public class TabuSearchScheduler {
 		int maxIterations = fattoriale(size, MAX_FACTORIAL);
 
 		// Tabu tenure settings (absolute values)
+		// Tabu tenure is defined as 1 <= min <= initial <= max, relative to the number of jobs.
+		// The initial tenure is set between min and max, based on the number of jobs, to allow for an exploration phase at the beginning
+		// The tabu tenure is not already set to the min or the max value to allow for a middle phase where the algorithm can adapt to the problem.
 		int maxTabuTenure = (int) (jobs.size() * MAX_TENURE_FRAC);
 		int minTabuTenure = (int) Math.max(size * MIN_TENURE_FRAC, 1);
 		int initialTabuTenure = (int) Math.max(minTabuTenure, Math.min(size * INITIAL_TENURE_FRAC, maxTabuTenure));
 
-		// Calculate the no-improvement threshold: the number of iterations without improvement before adaptation.
+		// Calculate the no-improvement threshold: the number of iterations without improvement before adaptation (minimum threshold enforced)
+		// The threshold enables the algorithm to adapt its parameters when stuck in a local minimum, by increasing the tabu tenure and jump size.
 		int noImprovementThreshold = Math.max(maxIterations / NO_IMPROVEMENT_THRESHOLD_FRAC, MIN_NO_IMPROVEMENT_THRESHOLD);
 
 		// --------------------- Run Tabu Search ---------------------
@@ -93,15 +101,16 @@ public class TabuSearchScheduler {
 	 */
 	public static Solution tabuSearch(List<Job> jobs, int maxIterations,
 									  int initialTabuTenure, int minTabuTenure, int maxTabuTenure, int noImprovementThreshold) {
-		// INITIAL SOLUTION: Use the Earliest Due Date (EDD) rule.
+		// INITIAL SOLUTION: Use the Earliest Due Date (EDD) rule - sort jobs by due date.
 		Solution currentSolution = new Solution(jobs);
 		currentSolution.sortByDueDate();
 
-		Solution bestSolution = new Solution(currentSolution);
-		double bestObjective = bestSolution.getObjective();
-
 		System.out.println("EDD Initial Solution:");
 		System.out.println(currentSolution);
+
+		// Global variable to store the best solution found.
+		Solution bestSolution = new Solution(currentSolution);
+		double bestObjective = bestSolution.getObjective();
 
 		// Iteration tracking.
 		int bestIteration = 0;
@@ -114,39 +123,58 @@ public class TabuSearchScheduler {
 		int maxJumpSize = currentSolution.size() - 1;
 		int currentJumpSize = minJumpSize;
 
-		// Tabu list: maps move keys (String) to iteration numbers until which the move is tabu.
+		// Tabu list: move string -> iteration when it expires.
 		Map<String, Integer> tabuList = new HashMap<>();
-		// LTM frequency map: counts the frequency of each move.
+		// LTM frequency map: move string -> frequency count.
 		Map<String, Integer> frequencyMap = new HashMap<>();
 
 		// Main Tabu Search loop.
 		while (iteration < maxIterations) {
 			iteration++;
-			List<Candidate> allCandidateList = new ArrayList<>();
-			List<Candidate> validCandidateList = new ArrayList<>();
+			List<Candidate> allCandidateList = new ArrayList<>(); // Store all generated candidates.
+			List<Candidate> validCandidateList = new ArrayList<>(); // Store valid candidates (not tabu or meeting aspiration criterion).
 
 			// --------------------- Dynamic Aspiration Threshold ---------------------
-			// Base threshold is 5%; relax it as non-improvement increases.
-			double baseAspiration = 0.05;
-			double dynamicAspiration = baseAspiration - ((double) nonImprovementCount / noImprovementThreshold) * 0.04;
-			dynamicAspiration = Math.max(dynamicAspiration, 0.01);
+			// Base threshold is 5%; relax it as non-improvement increases even so slight.
+			double dynamicAspiration = BASE_ASPIRATION - ((double) nonImprovementCount / noImprovementThreshold) * FRAC_ASPIRATION_ADAPT;
+			dynamicAspiration = Math.max(dynamicAspiration, MIN_ASPIRATION);
 
 			// --------------------- Candidate Generation ---------------------
-			// Generate candidate moves using non-adjacent swaps.
+			/*
+			 * Defines the neighborhood N(x, jump) by swapping component i with component j = i + k * jump,
+			 * for k = 1, 2, ..., as long as j <= n.
+			 *
+			 * Given a vector x = (x1, x2, ..., xn) and a positive integer jump > 0,
+			 * the neighborhood is defined as:
+			 *
+			 * N(x, jump) = { y ∈ R^n : ∃ i ∈ {1, ..., n}, k ∈ N such that
+			 * j = i + k * jump ≤ n and
+			 * y = (x1, ..., x_{i-1}, x_j, x_{i+1}, ..., x_{j-1}, x_i, x_{j+1}, ..., x_n) }
+			 *
+			 * Here:
+			 * - i: the index of the component to be swapped.
+			 * - k: the step count, determining how far to jump.
+			 * - j = i + k * jump: the index of the component with which x_i is swapped.
+			 *
+			 * This neighborhood explores permutations obtained by periodic jumps
+			 * along the vector based on the given jump size.
+			 */
 			for (int i = 0; i < currentSolution.size() - currentJumpSize; i++) {
-				// For each i, generate moves for j = i+currentJumpSize, i+2*currentJumpSize, etc.
 				for (int j = i + currentJumpSize; j < currentSolution.size(); j += currentJumpSize) {
 					// Create a neighbor solution by swapping jobs at positions i and j.
 					Solution neighbor = new Solution(currentSolution);
 					neighbor.swap(i, j);
+					// Evaluate the neighbor solution and compute its quick evaluation (maximum tardiness).
 					double neighborObjective = neighbor.getObjective();
 					double quickEval = neighbor.getMaxTardiness();
 
-					// Build a normalized move key (e.g., "SWAP:1:3").
+					// Build a normalized move key (e.g., "SWAP:1:3")
+					// The move is always represented as the smaller ID first because the jump are always forward.
 					int id1 = Math.min(currentSolution.getJobIdAt(i), currentSolution.getJobIdAt(j));
 					int id2 = Math.max(currentSolution.getJobIdAt(i), currentSolution.getJobIdAt(j));
 					String moveKey = "SWAP:" + id1 + ":" + id2;
 
+					// Create a candidate solution as the initial solution with the proposed move.
 					Candidate candidate = new Candidate(neighbor, moveKey, neighborObjective, quickEval);
 					allCandidateList.add(candidate);
 
@@ -156,6 +184,8 @@ public class TabuSearchScheduler {
 					double adjustedObj = neighborObjective + PENALTY_COEFFICIENT * freq;
 
 					// Apply dynamic aspiration: allow candidate if not tabu, or if it meets the aspiration threshold.
+					// Aspiration threshold is a percentage of the best objective found so far: if the candidate is better than
+					// the best objective by this percentage, it is accepted even if it is tabu.
 					if (!isTabu || adjustedObj <= bestObjective * (1 - dynamicAspiration)) {
 						validCandidateList.add(candidate);
 					}
@@ -163,15 +193,34 @@ public class TabuSearchScheduler {
 			}
 
 			// Fallback: if no candidate qualifies under tabu/aspiration, use all generated candidates.
-			List<Candidate> candidateList = validCandidateList.isEmpty() ? allCandidateList : validCandidateList;
+			// This ensures that the algorithm always makes a move, even if all candidates are tabu or not aspiring.
+			// The tabu list is ignored in this case, and a soft reset is applied by removing entries older than a certain threshold.
+			List<Candidate> candidateList;
+
+			if (validCandidateList.isEmpty()) {
+				// Calculate the decay threshold dynamically based on the current tabu tenure
+				int decayThreshold = (int) (currentTabuTenure * TENURE_DECAY_THRESHOLD);
+
+				// Remove tabu entries older than the calculated threshold
+				int finalIteration1 = iteration;
+				tabuList.entrySet().removeIf(entry -> entry.getValue() < finalIteration1 - decayThreshold);
+
+				// Use all candidates as fallback
+				candidateList = allCandidateList;
+			} else {
+				candidateList = validCandidateList;
+			}
+
 
 			// --------------------- Two-Phase Candidate Selection ---------------------
 			// Phase 1: Sort by quick evaluation (maximum tardiness).
 			candidateList.sort(Comparator.comparingDouble(c -> c.quickEvaluation));
-			// Select the best 50% (by quick evaluation).
-			int subsetSize = Math.max(1, candidateList.size() / 2);
+			// Select a fraction of the candidates for full evaluation.
+			int subsetSize = (int) Math.max(1, candidateList.size() * FRAC_QUICK_EVAL);
 			List<Candidate> candidateSubset = candidateList.subList(0, subsetSize);
 			// Phase 2: Select the candidate with the lowest full objective.
+			// In this second phase we could add some randomness with an RCL list to avoid getting stuck in local optima.
+			// In this implementation we simply select the best candidate.
 			Candidate bestCandidate = Collections.min(candidateSubset, Comparator.comparingDouble(c -> c.objectiveValue));
 
 			// Update the current solution.
