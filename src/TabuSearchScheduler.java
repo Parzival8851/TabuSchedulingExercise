@@ -241,9 +241,10 @@ public class TabuSearchScheduler {
 				bestIteration = iteration;
 				nonImprovementCount = 0;
 				currentTabuTenure = minTabuTenure;
-				currentJumpSize = minJumpSize; // Reset jump size on improvement.
+				currentJumpSize = minJumpSize;
 			} else {
-				// No improvement: increase non-improvement count and possibly adapt parameters.
+				// No improvement: increase non-improvement count and possibly adapt parameters to diversify the search.
+				// This is a simple strategy to adapt the tabu tenure and jump size based on the number of non-improving iterations.
 				nonImprovementCount++;
 				if (nonImprovementCount >= noImprovementThreshold) {
 					currentTabuTenure = Math.min(currentTabuTenure + 1, maxTabuTenure);
@@ -254,10 +255,14 @@ public class TabuSearchScheduler {
 
 			// --------------------- Update Tabu List ---------------------
 			// Mark the move as tabu for the next 'currentTabuTenure' iterations.
+			// The tabu list stores direct moves, but it can be easily modified to include reverse moves
+			// by adjusting the indexes in the moveKey.
+			// To track backward swaps, a new moveKey format like "REVERSE:id1:id2" could be introduced.
 			tabuList.put(bestCandidate.moveKey, iteration + currentTabuTenure);
 			tabuList.entrySet().removeIf(entry -> entry.getValue() <= finalIteration);
 		}
 
+		// --------------------- Return the Best Solution ---------------------
 		System.out.println("Best solution found at iteration: " + bestIteration);
 		return bestSolution;
 	}
@@ -281,42 +286,6 @@ public class TabuSearchScheduler {
 			result *= i;
 		}
 		return result;
-	}
-
-	/**
-	 * Computes the total weighted tardiness for a sequence of jobs.
-	 *
-	 * @param sequence the list of jobs.
-	 * @return the total weighted tardiness.
-	 */
-	public static double calculateTotalWeightedTardiness(List<Job> sequence) {
-		double totalWeightedTardiness = 0;
-		double currentTime = 0;
-		for (Job job : sequence) {
-			currentTime += job.processingTime;
-			double tardiness = Math.max(0, currentTime - job.dueDate);
-			totalWeightedTardiness += job.weight * tardiness;
-		}
-		return totalWeightedTardiness;
-	}
-
-	/**
-	 * Computes the maximum tardiness in a sequence of jobs.
-	 *
-	 * @param sequence the list of jobs.
-	 * @return the maximum tardiness.
-	 */
-	public static double calculateMaxTardiness(List<Job> sequence) {
-		double maxTardiness = 0;
-		double currentTime = 0;
-		for (Job job : sequence) {
-			currentTime += job.processingTime;
-			double tardiness = Math.max(0, currentTime - job.dueDate);
-			if (tardiness > maxTardiness) {
-				maxTardiness = tardiness;
-			}
-		}
-		return maxTardiness;
 	}
 }
 
@@ -353,42 +322,6 @@ class Job {
 }
 
 /**
- * Represents a move between two jobs in a schedule.
- * The move is defined by two job IDs, stored in sorted order.
- */
-class Move {
-	int jobId1;
-	int jobId2;
-
-	/**
-	 * Constructs a Move between two job IDs.
-	 *
-	 * @param jobId1 the first job ID.
-	 * @param jobId2 the second job ID.
-	 */
-	public Move(int jobId1, int jobId2) {
-		// Normalize the order.
-		this.jobId1 = Math.min(jobId1, jobId2);
-		this.jobId2 = Math.max(jobId1, jobId2);
-	}
-
-	@Override
-	public int hashCode() {
-		return Objects.hash(jobId1, jobId2);
-	}
-
-	@Override
-	public boolean equals(Object obj) {
-		if (this == obj) return true;
-		if (obj instanceof Move) {
-			Move other = (Move) obj;
-			return this.jobId1 == other.jobId1 && this.jobId2 == other.jobId2;
-		}
-		return false;
-	}
-}
-
-/**
  * Holds a candidate solution along with the move key used to generate it,
  * its full objective value (total weighted tardiness), and a quick evaluation (maximum tardiness).
  */
@@ -417,9 +350,19 @@ class Candidate {
 /**
  * Encapsulates a schedule (list of jobs) and provides operations for evaluation and manipulation,
  * including sorting by due date, swapping jobs, and computing objective values.
+ * <p>
+ * This class caches the computed total weighted tardiness and maximum tardiness.
+ * It uses a dirty flag to recompute these values only when the schedule has been modified.
  */
 class Solution {
 	List<Job> schedule;
+
+	// Cached objective values.
+	private double cachedObjective;
+	private double cachedMaxTardiness;
+
+	// Flag to indicate if the schedule has been modified and the cached values are no longer valid.
+	private boolean isDirty;
 
 	/**
 	 * Constructs a Solution using the given list of jobs.
@@ -428,6 +371,7 @@ class Solution {
 	 */
 	public Solution(List<Job> jobs) {
 		this.schedule = new ArrayList<>(jobs);
+		this.isDirty = true; // Initially, we need to compute the objectives.
 	}
 
 	/**
@@ -437,61 +381,73 @@ class Solution {
 	 */
 	public Solution(Solution other) {
 		this.schedule = new ArrayList<>(other.schedule);
+		this.isDirty = true; // New copy should compute objectives anew.
 	}
 
 	/**
-	 * Sorts the schedule by due date (Earliest Due Date first).
+	 * Sorts the schedule by due date (Earliest Due Date first) and marks the solution as modified.
 	 */
 	public void sortByDueDate() {
 		schedule.sort(Comparator.comparingInt(job -> job.dueDate));
+		isDirty = true;
 	}
 
 	/**
-	 * Computes the total weighted tardiness of the schedule.
+	 * Returns the total weighted tardiness of the schedule.
+	 * Recomputes the value only if the schedule was modified.
 	 *
 	 * @return the total weighted tardiness.
 	 */
 	public double getObjective() {
-		double total = 0;
-		int currentTime = 0;
-		for (Job job : schedule) {
-			currentTime += job.processingTime;
-			total += job.weight * Math.max(0, currentTime - job.dueDate);
+		if (isDirty) {
+			computeObjectives();
 		}
-		return total;
+		return cachedObjective;
 	}
 
 	/**
-	 * Computes the maximum tardiness among all jobs in the schedule.
+	 * Returns the maximum tardiness among all jobs in the schedule.
+	 * Recomputes the value only if the schedule was modified.
 	 *
 	 * @return the maximum tardiness.
 	 */
 	public double getMaxTardiness() {
+		if (isDirty) {
+			computeObjectives();
+		}
+		return cachedMaxTardiness;
+	}
+
+	/**
+	 * Computes both the total weighted tardiness and maximum tardiness in one pass.
+	 * Updates the cached values and resets the dirty flag.
+	 */
+	public void computeObjectives() {
+		double total = 0;
 		double maxTardiness = 0;
 		int currentTime = 0;
 		for (Job job : schedule) {
 			currentTime += job.processingTime;
 			double tardiness = Math.max(0, currentTime - job.dueDate);
+			total += job.weight * tardiness;
 			if (tardiness > maxTardiness) {
 				maxTardiness = tardiness;
 			}
 		}
-		return maxTardiness;
+		cachedObjective = total;
+		cachedMaxTardiness = maxTardiness;
+		isDirty = false;
 	}
 
 	/**
-	 * Computes the tardiness for the job at the specified index.
+	 * Swaps the jobs at indices i and j and marks the solution as modified.
 	 *
-	 * @param index the index of the job.
-	 * @return the tardiness of the job at that index.
+	 * @param i the first index.
+	 * @param j the second index.
 	 */
-	public double getJobTardiness(int index) {
-		int currentTime = 0;
-		for (int i = 0; i <= index; i++) {
-			currentTime += schedule.get(i).processingTime;
-		}
-		Job job = schedule.get(index);
-		return Math.max(0, currentTime - job.dueDate);
+	public void swap(int i, int j) {
+		Collections.swap(schedule, i, j);
+		isDirty = true;
 	}
 
 	/**
@@ -504,16 +460,6 @@ class Solution {
 	}
 
 	/**
-	 * Swaps the jobs at indices i and j.
-	 *
-	 * @param i the first index.
-	 * @param j the second index.
-	 */
-	public void swap(int i, int j) {
-		Collections.swap(schedule, i, j);
-	}
-
-	/**
 	 * Returns the job ID at the specified index.
 	 *
 	 * @param index the index.
@@ -523,34 +469,19 @@ class Solution {
 		return schedule.get(index).id;
 	}
 
-	/**
-	 * Removes and returns the job at the specified index.
-	 *
-	 * @param index the index.
-	 * @return the removed job.
-	 */
-	public Job removeJob(int index) {
-		return schedule.remove(index);
-	}
-
-	/**
-	 * Inserts a job at the specified index.
-	 *
-	 * @param index the index.
-	 * @param job the job to insert.
-	 */
-	public void insertJob(int index, Job job) {
-		schedule.add(index, job);
-	}
-
 	@Override
 	public String toString() {
+		// Ensure the objectives are up-to-date.
+		if (isDirty) {
+			computeObjectives();
+		}
 		StringBuilder sb = new StringBuilder();
 		sb.append("Schedule: ");
 		for (Job job : schedule) {
 			sb.append(job).append(" ");
 		}
-		sb.append("\nTotal Weighted Tardiness: ").append(getObjective());
+		sb.append("\nTotal Weighted Tardiness: ").append(cachedObjective);
 		return sb.toString();
 	}
 }
+
