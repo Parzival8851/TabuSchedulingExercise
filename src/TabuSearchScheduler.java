@@ -75,7 +75,7 @@ public class TabuSearchScheduler {
 		// --------------------- Parameter Setup ---------------------
 		int size = jobs.size();
 		// Maximum iterations is capped by the factorial of the number of jobs or MAX_FACTORIAL.
-		int maxIterations = fattoriale(size, MAX_FACTORIAL);
+		int maxIterations = factorial(size, MAX_FACTORIAL);
 
 		// Tabu tenure settings (absolute values)
 		// Tabu tenure is defined as 1 <= min <= initial <= max, relative to the number of jobs.
@@ -285,7 +285,7 @@ public class TabuSearchScheduler {
 	 * @param maxValue the maximum allowed value.
 	 * @return the factorial of n or the current result if it exceeds maxValue.
 	 */
-	public static int fattoriale(int n, int maxValue) {
+	public static int factorial(int n, int maxValue) {
 		if (n <= 1) {
 			return 1;
 		}
