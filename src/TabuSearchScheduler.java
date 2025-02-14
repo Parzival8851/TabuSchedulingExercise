@@ -144,10 +144,10 @@ public class TabuSearchScheduler {
 			 * Defines the neighborhood N(x, jump) by swapping component i with component j = i + k * jump,
 			 * for k = 1, 2, ..., as long as j <= n.
 			 *
-			 * Given a vector x = (x1, x2, ..., xn) and a positive integer jump > 0,
+			 * Given a vector x = (x1, x2, ..., xn) and a positive integer jump ∈ N^+,
 			 * the neighborhood is defined as:
 			 *
-			 * N(x, jump) = { y ∈ R^n : ∃ i ∈ {1, ..., n}, k ∈ N such that
+			 * N(x, jump) = { y ∈ R^n : ∃ i ∈ {1, ..., n}, k ∈ N^+ such that
 			 * j = i + k * jump ≤ n and
 			 * y = (x1, ..., x_{i-1}, x_j, x_{i+1}, ..., x_{j-1}, x_i, x_{j+1}, ..., x_n) }
 			 *
@@ -181,6 +181,7 @@ public class TabuSearchScheduler {
 					// Check tabu status and incorporate LTM frequency penalty.
 					boolean isTabu = tabuList.containsKey(moveKey) && tabuList.get(moveKey) > iteration;
 					int freq = frequencyMap.getOrDefault(moveKey, 0);
+					// LTM here is used as a penalization for already used moves so the search prefers new moves in its exploration
 					double adjustedObj = neighborObjective + PENALTY_COEFFICIENT * freq;
 
 					// Apply dynamic aspiration: allow candidate if not tabu, or if it meets the aspiration threshold.
@@ -197,20 +198,19 @@ public class TabuSearchScheduler {
 			// The tabu list is ignored in this case, and a soft reset is applied by removing entries older than a certain threshold.
 			List<Candidate> candidateList;
 
+			int finalIteration = iteration;
 			if (validCandidateList.isEmpty()) {
 				// Calculate the decay threshold dynamically based on the current tabu tenure
-				int decayThreshold = (int) (currentTabuTenure * TENURE_DECAY_THRESHOLD);
+				int decayThreshold = Math.max(1, (int) (currentTabuTenure * TENURE_DECAY_THRESHOLD));
 
 				// Remove tabu entries older than the calculated threshold
-				int finalIteration1 = iteration;
-				tabuList.entrySet().removeIf(entry -> entry.getValue() < finalIteration1 - decayThreshold);
+				tabuList.entrySet().removeIf(entry -> entry.getValue() < finalIteration + decayThreshold);
 
 				// Use all candidates as fallback
 				candidateList = allCandidateList;
 			} else {
 				candidateList = validCandidateList;
 			}
-
 
 			// --------------------- Two-Phase Candidate Selection ---------------------
 			// Phase 1: Sort by quick evaluation (maximum tardiness).
@@ -228,12 +228,14 @@ public class TabuSearchScheduler {
 			double currentObjective = bestCandidate.objectiveValue;
 
 			// --------------------- Update Long-Term Memory (LTM) ---------------------
-			// Increment the frequency count for the move performed.
+			// Increment the frequency count for the performed move to reduce its likelihood of being used again
+			// promoting better exploration of the solution space.
 			frequencyMap.put(bestCandidate.moveKey, frequencyMap.getOrDefault(bestCandidate.moveKey, 0) + 1);
+
 
 			// --------------------- Adaptive Parameter Updates ---------------------
 			if (currentObjective < bestObjective) {
-				// Improvement: update best solution and reset parameters.
+				// Improvement: update the best solution and reset parameters to intensify the search.
 				bestSolution = new Solution(currentSolution);
 				bestObjective = currentObjective;
 				bestIteration = iteration;
@@ -253,7 +255,6 @@ public class TabuSearchScheduler {
 			// --------------------- Update Tabu List ---------------------
 			// Mark the move as tabu for the next 'currentTabuTenure' iterations.
 			tabuList.put(bestCandidate.moveKey, iteration + currentTabuTenure);
-			int finalIteration = iteration;
 			tabuList.entrySet().removeIf(entry -> entry.getValue() <= finalIteration);
 		}
 
